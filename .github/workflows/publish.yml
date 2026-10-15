@@ -1,0 +1,63 @@
+name: Pubblica
+
+# Pubblica la versione del mese: scarica gli installer Windows già compilati nei repository
+# privati delle app e li mette in un'unica release pubblica qui (tag v<versione>), con un solo
+# SHA256SUMS.txt. TLI Suite legge sempre l'ultima release: chi salta dei mesi installa
+# direttamente quella più recente.
+#
+# Serve il segreto APPS_TOKEN: token a grana fine con Actions e Contents in sola lettura sui
+# repository delle app.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versione (es. 26.10.0)"
+        required: true
+      runs:
+        description: 'Compilazioni da pubblicare, JSON {"repository": id_run} (es. {"imago": 123, "tli-suite": 456})'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scarica gli installer
+        env:
+          GH_TOKEN: ${{ secrets.APPS_TOKEN }}
+          RUNS: ${{ inputs.runs }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          for repo in $(jq -r 'keys[]' <<<"$RUNS"); do
+            run=$(jq -r --arg r "$repo" '.[$r]' <<<"$RUNS")
+            echo "== $repo, compilazione $run"
+            gh run download "$run" -R "b3llabona/$repo" -D "dist/$repo"
+            found=$(find "dist/$repo" -type f \( -name "*-$VERSION-windows-*.msi" -o -name "*-$VERSION-windows-*-portable.zip" \) | wc -l)
+            if [ "$found" -eq 0 ]; then
+              echo "::error::$repo: nessun installer della versione $VERSION nella compilazione $run"
+              exit 1
+            fi
+            find "dist/$repo" -type f \( -name "*-$VERSION-windows-*.msi" -o -name "*-$VERSION-windows-*-portable.zip" \) -exec cp {} dist/release/ \;
+          done
+          cd dist/release
+          sha256sum -- * | sed 's/ \*/  /' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Crea la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "v$VERSION" dist/release/* -R "$GITHUB_REPOSITORY" \
+            --title "TLI $VERSION" \
+            --notes "Versione $VERSION delle app TLI. Si installa e si aggiorna da TLI Suite."
