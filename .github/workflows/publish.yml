@@ -52,12 +52,25 @@ jobs:
           sha256sum -- * | sed 's/ \*/  /' > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Crea la release
+      - name: Crea o aggiorna la release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          gh release create "v$VERSION" dist/release/* -R "$GITHUB_REPOSITORY" \
-            --title "TLI $VERSION" \
-            --notes "Versione $VERSION delle app TLI. Si installa e si aggiorna da TLI Suite."
+          if gh release view "v$VERSION" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # La versione esiste già (ripubblicazione di una correzione): i file nuovi sostituiscono
+            # quelli omonimi, gli altri restano, e le somme di controllo si rifanno sull'insieme.
+            echo "La release v$VERSION esiste: aggiorno i file"
+            mkdir -p dist/old
+            gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D dist/old --pattern "*.msi" --pattern "*.zip"
+            for f in dist/old/*; do
+              [ -e "dist/release/$(basename "$f")" ] || cp "$f" dist/release/
+            done
+            (cd dist/release && ls | grep -v '^SHA256SUMS.txt$' | xargs sha256sum | sed 's/ \*/  /' > SHA256SUMS.txt)
+            gh release upload "v$VERSION" dist/release/* -R "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "v$VERSION" dist/release/* -R "$GITHUB_REPOSITORY" \
+              --title "TLI $VERSION" \
+              --notes "Versione $VERSION delle app TLI. Si installa e si aggiorna da TLI Suite."
+          fi
