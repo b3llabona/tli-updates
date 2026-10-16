@@ -1,6 +1,6 @@
 name: Pubblica
 
-# Pubblica la versione del mese: scarica gli installer Windows già compilati nei repository
+# Pubblica la versione del mese: scarica gli installer Windows e macOS già compilati nei repository
 # privati delle app e li mette in un'unica release pubblica qui (tag v<versione>), con un solo
 # SHA256SUMS.txt. TLI Suite legge sempre l'ultima release: chi salta dei mesi installa
 # direttamente quella più recente.
@@ -41,12 +41,13 @@ jobs:
             run=$(jq -r --arg r "$repo" '.[$r]' <<<"$RUNS")
             echo "== $repo, compilazione $run"
             gh run download "$run" -R "b3llabona/$repo" -D "dist/$repo"
-            found=$(find "dist/$repo" -type f \( -name "*-$VERSION-windows-*.msi" -o -name "*-$VERSION-windows-*-portable.zip" \) | wc -l)
+            pick() { find "dist/$repo" -type f \( -name "*-$VERSION-windows-*.msi" -o -name "*-$VERSION-windows-*-portable.zip" -o -name "*-$VERSION-macos-*.dmg" -o -name "*-$VERSION-macos-*.zip" \) "$@"; }
+            found=$(pick | wc -l)
             if [ "$found" -eq 0 ]; then
-              echo "::error::$repo: nessun installer della versione $VERSION nella compilazione $run"
+              echo "::error::$repo: nessun installer (Windows o macOS) della versione $VERSION nella compilazione $run"
               exit 1
             fi
-            find "dist/$repo" -type f \( -name "*-$VERSION-windows-*.msi" -o -name "*-$VERSION-windows-*-portable.zip" \) -exec cp {} dist/release/ \;
+            pick -exec cp {} dist/release/ \;
           done
           cd dist/release
           sha256sum -- * | sed 's/ \*/  /' > SHA256SUMS.txt
@@ -63,7 +64,7 @@ jobs:
             # quelli omonimi, gli altri restano, e le somme di controllo si rifanno sull'insieme.
             echo "La release v$VERSION esiste: aggiorno i file"
             mkdir -p dist/old
-            gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D dist/old --pattern "*.msi" --pattern "*.zip"
+            gh release download "v$VERSION" -R "$GITHUB_REPOSITORY" -D dist/old --pattern "*.msi" --pattern "*.zip" --pattern "*.dmg"
             for f in dist/old/*; do
               [ -e "dist/release/$(basename "$f")" ] || cp "$f" dist/release/
             done
